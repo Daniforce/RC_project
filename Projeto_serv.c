@@ -145,30 +145,30 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
     close(client_fd);
 }
 
-void enviar_config_multicast() 
-{
-    struct sockaddr_in addr;
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+void enviar_config_multicast() {
+    int sockfd;
+    struct sockaddr_in dest;
 
-    if (sock < 0) {
-        perror("socket UDP");
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket multicast");
         return;
     }
 
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(12345);
-    addr.sin_addr.s_addr = inet_addr("239.0.0.1");
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(9876); // porta multicast
+    inet_pton(AF_INET, "239.0.0.1", &dest.sin_addr); // endereço multicast
 
-    if (sendto(sock, &configuracao_ativa, sizeof(configuracao_ativa), 0, 
-               (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("sendto");
+    if (sendto(sockfd, &configuracao_ativa, sizeof(configuracao_ativa), 0,
+               (struct sockaddr *)&dest, sizeof(dest)) < 0) {
+        perror("sendto multicast");
     } else {
-        printf("[INFO] Configuração multicast enviada para 239.0.0.1:12345\n");
+        printf("[INFO] Configuração enviada via multicast.\n");
     }
 
-    close(sock);
+    close(sockfd);
 }
+
 
 void erro(char *msg)
 {
@@ -176,8 +176,15 @@ void erro(char *msg)
     exit(1);
 }
 
-void adicionar_cliente(struct in_addr ip) 
-{
-    clientes[num_clientes++].ip = ip;
-    printf("[INFO] Cliente registado: %s\n", inet_ntoa(ip));
+void adicionar_cliente(struct in_addr ip) {
+    for (int i = 0; i < num_clientes; i++) {
+        if (clientes[i].ip.s_addr == ip.s_addr) return; // já existe
+    }
+
+    if (num_clientes < 3) {
+        clientes[num_clientes++].ip = ip;
+        printf("[INFO] Cliente adicionado: %s\n", inet_ntoa(ip));
+    } else {
+        printf("[WARN] Número máximo de clientes atingido.\n");
+    }
 }
