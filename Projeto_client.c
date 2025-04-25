@@ -1,17 +1,17 @@
+#define _DEFAULT_SOURCE
 #include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <netinet/in.h>
-#include <sys/time.h>
+#include <arpa/inet.h>
 
 #define PORT 9877
 #define BUFLEN 512
 #define MAX_RETRIES 5
 #define TMIN 500
+
+#define MULTICAST_GROUP "239.0.0.1"
+#define MULTICAST_PORT 9876
+
+int multicast_sock;
 
 // PowerUDP header
 typedef struct {
@@ -20,6 +20,50 @@ typedef struct {
     uint8_t flags;       // Podes definir outros bits de controlo
     uint16_t length;     // Tamanho do payload
 } PowerUDPHeader;
+
+typedef struct {
+    uint8_t enable_retransmission;  // 0 = Desativado, 1 = Ativado
+    uint8_t enable_backoff;         // 0 = Desativado, 1 = Ativado
+    uint8_t enable_sequence;        // 0 = Desativado, 1 = Ativado
+    uint16_t base_timeout;          // Tempo base (em ms) - precisa de ntohs()
+    uint8_t max_retries;            // Número máximo de retransmissões
+} ConfigMessage;
+
+void configurar_socket_multicast() {
+    struct sockaddr_in addr;
+    struct ip_mreq mreq;
+
+    multicast_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (multicast_sock < 0) {
+        perror("socket multicast");
+        exit(1);
+    }
+
+    int reuse = 1;
+    if (setsockopt(multicast_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse)) < 0) {
+        perror("setsockopt SO_REUSEADDR");
+        exit(1);
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(MULTICAST_PORT);
+
+    if (bind(multicast_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind multicast");
+        exit(1);
+    }
+
+    mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_GROUP);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (setsockopt(multicast_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
+        perror("setsockopt IP_ADD_MEMBERSHIP");
+        exit(1);
+    }
+
+    printf("[INFO] Socket multicast configurado.\n");
+}
 
 int ler_header(int sockfd, char *buffer, struct sockaddr_in *src, socklen_t *addrlen, PowerUDPHeader *header) {
     ssize_t len = recvfrom(sockfd, buffer, 1024, 0, (struct sockaddr *)src, addrlen);
@@ -135,6 +179,8 @@ int main() {
     struct sockaddr_in addr;
     uint32_t seq_num = 0;
 
+    configurar_socket_multicast();
+
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
         perror("socket");
         exit(1);
@@ -158,13 +204,23 @@ int main() {
     dest.sin_port = htons(PORT);
     dest.sin_addr.s_addr = inet_addr("127.0.0.1");
 
+    fd_set readfds;
+    int maxfd = (sockfd > multicast_sock ? sockfd : multicast_sock);
+
     while (1) {
         fd_set readfds;
         FD_ZERO(&readfds);
-        FD_SET(0, &readfds);      // stdin
-        FD_SET(sockfd, &readfds); // socket
+        FD_SET(0, &readfds);               // stdin
+        FD_SET(sockfd, &readfds);          // PowerUDP UDP
+        FD_SET(multicast_sock, &readfds); // Multicast socket
 
-        select(sockfd + 1, &readfds, NULL, NULL, NULL);
+        int maxfd = sockfd;
+        if (multicast_sock > maxfd) maxfd = multicast_sock;
+
+        if (select(maxfd + 1, &readfds, NULL, NULL, NULL) < 0) {
+            perror("select");
+            continue;
+        }
 
         if (FD_ISSET(0, &readfds)) {
             char buf[BUFLEN];
@@ -177,8 +233,24 @@ int main() {
         if (FD_ISSET(sockfd, &readfds)) {
             recebe_powerudp_com_ack(sockfd);
         }
-    }
 
+        if (FD_ISSET(multicast_sock, &readfds)) {
+            ConfigMessage cfg;
+            ssize_t len = recvfrom(multicast_sock, &cfg, sizeof(cfg), 0, NULL, NULL);
+            if (len == sizeof(cfg)) {
+                printf("[Multicast] Nova configuração recebida:\n");
+                printf("  Retransmissão: %d\n", cfg.enable_retransmission);
+                printf("  Backoff: %d\n", cfg.enable_backoff);
+                printf("  Sequência: %d\n", cfg.enable_sequence);
+                printf("  Timeout base: %d\n", ntohs(cfg.base_timeout));
+                printf("  Retries máx: %d\n", cfg.max_retries);
+        
+                // Aqui podes aplicar a configuração, se tiveres variáveis globais
+                // Ex: config_active = cfg; (caso tenhas uma struct global para isso)
+            }
+        }
+    }
+    close(multicast_sock);
     close(sockfd);
     return 0;
 }
