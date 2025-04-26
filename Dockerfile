@@ -1,12 +1,13 @@
-FROM debian:bullseye
+FROM ubuntu:20.04
+RUN apt-get update && apt-get install -y nmap iputils-ping gcc gdb make net-tools traceroute netcat
 
-RUN apt-get update && \
-    apt-get install -y gcc make iputils-ping net-tools
+RUN chmod 777 /home
 
-WORKDIR /powerudp
+RUN mkdir -p /gns3volumes/home/Projeto
 
-COPY . .
+COPY ./ /gns3volumes/home/Projeto
 
-RUN make
+WORKDIR /gns3volumes/home/Projeto
 
-CMD ["bash"]
+RUN gcc -o Projeto_client Projeto_client.c
+RUN gcc -o Projeto_serv Projeto_serv.c

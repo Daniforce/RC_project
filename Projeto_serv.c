@@ -8,8 +8,8 @@
 #include <sys/wait.h>
 #include <arpa/inet.h>
 
-#define SERVER_PORT     9000
-//#define BUF_SIZE        1024
+#define SERVER_PORT     443
+#define BUF_SIZE        1024
 
 // Mensagem de registo (enviada pelo cliente via TCP)
 struct RegisterMessage {

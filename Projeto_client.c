@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
+#include <string.h>
+#include <unistd.h>
+
 
 #define PORT 9877
 #define BUFLEN 512
@@ -128,6 +131,8 @@ void envia_powerudp_confiavel(int sockfd, struct sockaddr_in *dest, const char *
         printf("Erro: não foi possível confirmar entrega após %d tentativas\n", MAX_RETRIES);
     }
 }
+
+void envia_acknak(int sockfd, struct sockaddr_in *dest, uint32_t seq_num, uint8_t tipo);
 
 
 void recebe_powerudp_com_ack(int sockfd) {
