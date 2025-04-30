@@ -3,11 +3,8 @@ RUN apt-get update && apt-get install -y nmap iputils-ping gcc gdb make net-tool
 
 RUN chmod 777 /home
 
-RUN mkdir -p /gns3volumes/home/Projeto
+RUN mkdir -p /gns3volumes/home
 
-COPY ./ /gns3volumes/home/Projeto
+COPY ./ /gns3volumes/home
 
 WORKDIR /gns3volumes/home/Projeto
-
-RUN gcc -o Projeto_client Projeto_client.c
-RUN gcc -o Projeto_serv Projeto_serv.c
