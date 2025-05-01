@@ -16,20 +16,19 @@
 
 int multicast_sock;
 
-// PowerUDP header
 typedef struct {
-    uint32_t seq_num;    // Número de sequência
-    uint8_t ack;         // Flag: 1 se for ACK, 0 se for dados
-    uint8_t flags;       // Podes definir outros bits de controlo
-    uint16_t length;     // Tamanho do payload
+    uint32_t seq_num;    
+    uint8_t ack;         
+    uint8_t flags;      
+    uint16_t length;    
 } PowerUDPHeader;
 
 typedef struct {
-    uint8_t enable_retransmission;  // 0 = Desativado, 1 = Ativado
-    uint8_t enable_backoff;         // 0 = Desativado, 1 = Ativado
-    uint8_t enable_sequence;        // 0 = Desativado, 1 = Ativado
-    uint16_t base_timeout;          // Tempo base (em ms) - precisa de ntohs()
-    uint8_t max_retries;            // Número máximo de retransmissões
+    uint8_t enable_retransmission;  
+    uint8_t enable_backoff;         
+    uint8_t enable_sequence;     
+    uint16_t base_timeout;         
+    uint8_t max_retries;            
 } ConfigMessage;
 
 void configurar_socket_multicast() {
@@ -102,7 +101,6 @@ void envia_powerudp_confiavel(int sockfd, struct sockaddr_in *dest, const char *
     while (tentativas < MAX_RETRIES && !ack_recebido) {
         envia_powerudp(sockfd, dest, dados, seq_num);
 
-        // Exponential backoff
         timeout.tv_sec = 0;
         timeout.tv_usec = TMIN * 1000 * (1 << tentativas);
         setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -150,11 +148,11 @@ void recebe_powerudp_com_ack(int sockfd) {
 
     if (header.seq_num != expected_seq) {
         printf("Fora de ordem. Esperado: %u, recebido: %u\n", expected_seq, header.seq_num);
-        envia_acknak(sockfd, &src, header.seq_num, 2); // NAK
+        envia_acknak(sockfd, &src, header.seq_num, 2); 
         return;
     }
 
-    envia_acknak(sockfd, &src, header.seq_num, 1); // ACK
+    envia_acknak(sockfd, &src, header.seq_num, 1);
 
     memcpy(dados, buffer + sizeof(header), header.length);
     dados[header.length] = '\0';
@@ -166,14 +164,13 @@ void recebe_powerudp_com_ack(int sockfd) {
 void envia_acknak(int sockfd, struct sockaddr_in *dest, uint32_t seq_num, uint8_t tipo) {
     PowerUDPHeader header;
     header.seq_num = htonl(seq_num);
-    header.ack = tipo; // 1 = ACK, 2 = NAK
+    header.ack = tipo; 
     header.flags = 0;
     header.length = 0;
 
     sendto(sockfd, &header, sizeof(header), 0, (struct sockaddr *)dest, sizeof(*dest));
 }
 
-// Função de erro
 void erro(char *s) {
     perror(s);
     exit(1);
@@ -191,7 +188,6 @@ int main() {
         exit(1);
     }
 
-    // Bind (para também receber mensagens)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PORT);
@@ -203,7 +199,6 @@ int main() {
         exit(1);
     }
 
-    // Endereço de destino
     struct sockaddr_in dest;
     dest.sin_family = AF_INET;
     dest.sin_port = htons(PORT);
@@ -215,9 +210,8 @@ int main() {
     while (1) {
         fd_set readfds;
         FD_ZERO(&readfds);
-        FD_SET(0, &readfds);               // stdin
-        FD_SET(sockfd, &readfds);          // PowerUDP UDP
-        FD_SET(multicast_sock, &readfds); // Multicast socket
+        FD_SET(sockfd, &readfds);          
+        FD_SET(multicast_sock, &readfds);
 
         int maxfd = sockfd;
         if (multicast_sock > maxfd) maxfd = multicast_sock;
@@ -250,8 +244,6 @@ int main() {
                 printf("  Timeout base: %d\n", ntohs(cfg.base_timeout));
                 printf("  Retries máx: %d\n", cfg.max_retries);
         
-                // Aqui podes aplicar a configuração, se tiveres variáveis globais
-                // Ex: config_active = cfg; (caso tenhas uma struct global para isso)
             }
         }
     }

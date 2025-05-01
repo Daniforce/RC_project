@@ -11,12 +11,10 @@
 #define SERVER_PORT     443
 #define BUF_SIZE        1024
 
-// Mensagem de registo (enviada pelo cliente via TCP)
 struct RegisterMessage {
     char psk[64];
 };
 
-// Mensagem de configuração (enviada pelo servidor via UDP multicast)
 struct ConfigMessage {
     uint8_t enable_retransmission;
     uint8_t enable_backoff;
@@ -66,11 +64,8 @@ int main()
 
     while (1)
     {
-        //clean finished child processes, avoiding zombies
-        //must use WNOHANG or would block whenever a child process
         while (waitpid(-1, NULL, WNOHANG) > 0);
 
-        // wait for new connection e gera erro caso algo dê errado
         if((client = accept(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_size)) == -1)
           erro("na função accept");
 
@@ -112,13 +107,10 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
 
     write(client_fd, ACK, strlen(ACK));
 
-    // Guarda o IP do cliente
     adicionar_cliente(client_addr->sin_addr);
 
-    // Envia configuração ativa atual ao cliente recém-registado
-    enviar_config_multicast();  // função que vamos criar
+    enviar_config_multicast();  
 
-    // Entra num loop para processar novos pedidos do cliente
     while (1) 
     {
         struct ConfigMessage req;
@@ -131,7 +123,6 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
             break;
         }
 
-        // Atualiza a configuração ativa
         configuracao_ativa.enable_retransmission = req.enable_retransmission;
         configuracao_ativa.enable_backoff = req.enable_backoff;
         configuracao_ativa.enable_sequence = req.enable_sequence;
@@ -139,7 +130,7 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
         configuracao_ativa.max_retries = req.max_retries;
 
         printf("[INFO] Nova configuração recebida de %s\n", inet_ntoa(client_addr->sin_addr));
-        enviar_config_multicast();  // envia nova config via multicast para todos
+        enviar_config_multicast();  
     }
 
     close(client_fd);
@@ -156,8 +147,8 @@ void enviar_config_multicast() {
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    dest.sin_port = htons(9876); // porta multicast
-    inet_pton(AF_INET, "239.0.0.1", &dest.sin_addr); // endereço multicast
+    dest.sin_port = htons(9876); 
+    inet_pton(AF_INET, "239.0.0.1", &dest.sin_addr);
 
     if (sendto(sockfd, &configuracao_ativa, sizeof(configuracao_ativa), 0,
                (struct sockaddr *)&dest, sizeof(dest)) < 0) {
@@ -178,7 +169,7 @@ void erro(char *msg)
 
 void adicionar_cliente(struct in_addr ip) {
     for (int i = 0; i < num_clientes; i++) {
-        if (clientes[i].ip.s_addr == ip.s_addr) return; // já existe
+        if (clientes[i].ip.s_addr == ip.s_addr) return;
     }
 
     if (num_clientes < 3) {
