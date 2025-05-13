@@ -179,76 +179,88 @@ void erro(char *s) {
 
 int main() {
     int sockfd;
-    struct sockaddr_in addr;
+    struct sockaddr_in addr, dest;
+    
     uint32_t seq_num = 0;
 
-    configurar_socket_multicast();
-
-    if ((sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
         perror("socket");
         exit(1);
     }
 
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(PORT);
+    dest.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (connect(sockfd, (struct sockaddr *)&dest, sizeof(dest)) < 0) {
         perror("bind");
         close(sockfd);
         exit(1);
     }
 
-    struct sockaddr_in dest;
     dest.sin_family = AF_INET;
     dest.sin_port = htons(PORT);
     dest.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    fd_set readfds;
-    int maxfd = (sockfd > multicast_sock ? sockfd : multicast_sock);
+    write(sockfd, POWERUDP_PSK, strlen(POWERUDP_PSK));
 
-    while (1) {
+          char resposta[4];
+    read(sockfd, resposta, sizeof(resposta));
+    resposta[3] = '\0';
+
+    if (strcmp(resposta, "ACK") == 0) {
+        printf("Autenticado! Iniciando comunicação...\n");
         fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(sockfd, &readfds);          
-        FD_SET(multicast_sock, &readfds);
+        int maxfd = (sockfd > multicast_sock ? sockfd : multicast_sock);
+        configurar_socket_multicast();
 
-        int maxfd = sockfd;
-        if (multicast_sock > maxfd) maxfd = multicast_sock;
+        while (1) {
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(sockfd, &readfds);          
+            FD_SET(multicast_sock, &readfds);
 
-        if (select(maxfd + 1, &readfds, NULL, NULL, NULL) < 0) {
-            perror("select");
-            continue;
-        }
+            int maxfd = sockfd;
+            if (multicast_sock > maxfd) maxfd = multicast_sock;
 
-        if (FD_ISSET(0, &readfds)) {
-            char buf[BUFLEN];
-            fgets(buf, BUFLEN, stdin);
-            buf[strcspn(buf, "\n")] = 0;
+            if (select(maxfd + 1, &readfds, NULL, NULL, NULL) < 0) {
+                perror("select");
+                continue;
+            }
 
-            envia_powerudp_confiavel(sockfd, &dest, buf, seq_num++);
-        }
+            if (FD_ISSET(0, &readfds)) {
+                char buf[BUFLEN];
+                fgets(buf, BUFLEN, stdin);
+                buf[strcspn(buf, "\n")] = 0;
 
-        if (FD_ISSET(sockfd, &readfds)) {
-            recebe_powerudp_com_ack(sockfd);
-        }
+                envia_powerudp_confiavel(sockfd, &dest, buf, seq_num++);
+            }
 
-        if (FD_ISSET(multicast_sock, &readfds)) {
-            ConfigMessage cfg;
-            ssize_t len = recvfrom(multicast_sock, &cfg, sizeof(cfg), 0, NULL, NULL);
-            if (len == sizeof(cfg)) {
-                printf("[Multicast] Nova configuração recebida:\n");
-                printf("  Retransmissão: %d\n", cfg.enable_retransmission);
-                printf("  Backoff: %d\n", cfg.enable_backoff);
-                printf("  Sequência: %d\n", cfg.enable_sequence);
-                printf("  Timeout base: %d\n", ntohs(cfg.base_timeout));
-                printf("  Retries máx: %d\n", cfg.max_retries);
-        
+            if (FD_ISSET(sockfd, &readfds)) {
+                recebe_powerudp_com_ack(sockfd);
+            }
+
+            if (FD_ISSET(multicast_sock, &readfds)) {
+                ConfigMessage cfg;
+                ssize_t len = recvfrom(multicast_sock, &cfg, sizeof(cfg), 0, NULL, NULL);
+                if (len == sizeof(cfg)) {
+                    printf("[Multicast] Nova configuração recebida:\n");
+                    printf("  Retransmissão: %d\n", cfg.enable_retransmission);
+                    printf("  Backoff: %d\n", cfg.enable_backoff);
+                    printf("  Sequência: %d\n", cfg.enable_sequence);
+                    printf("  Timeout base: %d\n", ntohs(cfg.base_timeout));
+                    printf("  Retries máx: %d\n", cfg.max_retries);
+            
+                }
             }
         }
+        close(multicast_sock);
+        close(sockfd);
+        return 0;
+    } else {
+        printf("Falha na autenticação.\n");
+        close(sockfd);
+        return 1;
     }
-    close(multicast_sock);
-    close(sockfd);
-    return 0;
 }

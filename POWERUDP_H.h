@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define POWERUDP_PSK "my_secret_key"
+
 int init_protocol(const char *server_ip, int server_port, const char *psk);
 void close_protocol();
 int request_protocol_config(int enable_retransmission, int enable_backoff, int enable_sequence, uint16_t base_timeout, uint8_t max_retries);

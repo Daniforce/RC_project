@@ -85,7 +85,7 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
 {
     struct RegisterMessage reg;
     ssize_t nread;
-    const char *valid_psk = "power123";
+    const char *valid_psk = "my_secret_key";
     const char *ACK = "ACK";
 
     nread = read(client_fd, &reg, sizeof(reg));
