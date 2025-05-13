@@ -4,7 +4,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
-
+#include "POWERUDP_H.h"
 
 #define PORT 9877
 #define BUFLEN 512
@@ -23,12 +23,13 @@ typedef struct {
     uint16_t length;    
 } PowerUDPHeader;
 
-typedef struct {
+typedef struct 
+{
     uint8_t enable_retransmission;  
     uint8_t enable_backoff;         
     uint8_t enable_sequence;     
     uint16_t base_timeout;         
-    uint8_t max_retries;            
+    uint8_t max_retries;      
 } ConfigMessage;
 
 void configurar_socket_multicast() {

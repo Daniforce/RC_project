@@ -6,5 +6,3 @@ RUN chmod 777 /home
 RUN mkdir -p /gns3volumes/home
 
 COPY ./ /gns3volumes/home
-
-WORKDIR /gns3volumes/home
