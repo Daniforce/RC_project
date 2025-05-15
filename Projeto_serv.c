@@ -7,13 +7,10 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
+#include <signal.h>
 
-#define SERVER_PORT     443
+#define SERVER_PORT     1048
 #define BUF_SIZE        1024
-
-struct RegisterMessage {
-    char psk[64];
-};
 
 struct ConfigMessage {
     uint8_t enable_retransmission;
@@ -36,11 +33,18 @@ struct ClienteInfo {
 };
 
 struct ClienteInfo clientes[3];
+pid_t pids[3];
 int num_clientes = 0;
+int client_fd_global;
+
 void process_client(int client_fd, struct sockaddr_in *client_addr);
 void enviar_config_multicast();
-void erro(char *msg);
 void adicionar_cliente(struct in_addr ip);
+void handle_sigint(int sig);
+void encerrar_todos_os_clientes();
+void erro(char *msg);
+void sigusr1_handler(int sig);
+void dummy_sigusr1_handler(int sig);
 
 int main() 
 {
@@ -52,14 +56,18 @@ int main()
 
     bzero((void *) &addr, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(SERVER_PORT);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    signal(SIGINT, handle_sigint);
+    signal(SIGUSR1, dummy_sigusr1_handler);  // Adicionado
+
+
+    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
         erro("na funcao socket");
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0)
         erro("na funcao bind");
-    if (listen(fd, 5) < 0)
+    if (listen(fd, 3) < 0)
         erro("na funcao listen");
 
     while (1)
@@ -69,13 +77,20 @@ int main()
         if((client = accept(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_size)) == -1)
           erro("na função accept");
 
+        pid_t pid = fork();
+
         if (client > 0) {
-            if (fork() == 0) {
+            if (pid == 0) {
+                signal(SIGINT, SIG_DFL);
                 close(fd);
                 process_client(client, &client_addr);
                 exit(0);
+            }else 
+            {
+                pids[num_clientes] = pid; // array global com os pids dos filhos
+                adicionar_cliente(client_addr.sin_addr);
+                close(client);
             }
-            close(client);
         }
     }
     return 0;
@@ -83,43 +98,40 @@ int main()
 
 void process_client(int client_fd, struct sockaddr_in *client_addr)
 {
-    struct RegisterMessage reg;
-    ssize_t nread;
-    const char *valid_psk = "my_secret_key";
-    const char *ACK = "ACK";
+    int nread, n= 0;
+    struct ConfigMessage req;
+    const char *valid_psk = "my_secret_key", *ACK = "ACK";
+    char psk[64];
+    client_fd_global = client_fd;
 
-    nread = read(client_fd, &reg, sizeof(reg));
-    if (nread != sizeof(reg)) {
-        fprintf(stderr, "[ERRO] Erro ao ler RegisterMessage\n");
+    nread = read(client_fd, psk, sizeof(psk) - 1);
+    if (nread <= 0) {
+        fprintf(stderr, "Erro ao ler PSK\n");
         close(client_fd);
         return;
     }
+    psk[nread] = '\0'; // garantir que termina em \0
 
-    reg.psk[63] = '\0';
-
-    if (strcmp(reg.psk, valid_psk) != 0) {
-        fprintf(stderr, "[WARN] PSK inválida: %s\n", reg.psk);
+    if (strcmp(psk, valid_psk) != 0) {
+        fprintf(stderr, "[WARN] PSK inválida: %s\n", psk);
         const char *NAK = "NAK";
         write(client_fd, NAK, strlen(NAK));
         close(client_fd);
         return;
     }
 
+    signal(SIGUSR1, sigusr1_handler);
+
     write(client_fd, ACK, strlen(ACK));
-
-    adicionar_cliente(client_addr->sin_addr);
-
-    enviar_config_multicast();  
 
     while (1) 
     {
-        struct ConfigMessage req;
         ssize_t r = read(client_fd, &req, sizeof(req));
         if (r == 0) {
-            printf("[INFO] Cliente fechou a ligação\n");
+            printf("Cliente fechou a ligação\n");
             break;
         } else if (r != sizeof(req)) {
-            fprintf(stderr, "[WARN] Erro ou mensagem malformada recebida\n");
+            fprintf(stderr, "Erro ou mensagem malformada recebida\n");
             break;
         }
 
@@ -129,8 +141,11 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
         configuracao_ativa.base_timeout = req.base_timeout;
         configuracao_ativa.max_retries = req.max_retries;
 
-        printf("[INFO] Nova configuração recebida de %s\n", inet_ntoa(client_addr->sin_addr));
-        enviar_config_multicast();  
+        if(n) {
+            fprintf(stderr, "[ERRO] Erro ao ler configuração\n");
+            printf("Nova configuração recebida de %s\n", inet_ntoa(client_addr->sin_addr));
+            enviar_config_multicast();
+        }
     }
 
     close(client_fd);
@@ -160,13 +175,6 @@ void enviar_config_multicast() {
     close(sockfd);
 }
 
-
-void erro(char *msg)
-{
-    perror(msg);
-    exit(1);
-}
-
 void adicionar_cliente(struct in_addr ip) {
     for (int i = 0; i < num_clientes; i++) {
         if (clientes[i].ip.s_addr == ip.s_addr) return;
@@ -178,4 +186,58 @@ void adicionar_cliente(struct in_addr ip) {
     } else {
         printf("[WARN] Número máximo de clientes atingido.\n");
     }
+}
+
+/*
+**************************************************************************************
+*******************************         PARA TRATAR ERROS            *********************************************
+***************************************************************************************
+*/
+
+void handle_sigint(int sig) {
+    printf("\nServidor a encerrar, a notificar clientes...\n");
+    for (int i = 0; i < num_clientes; i++) {
+        kill(pids[i], SIGUSR1);
+    }
+    encerrar_todos_os_clientes();
+    exit(0);
+}
+
+void dummy_sigusr1_handler(int sig) {
+    // Apenas para evitar mensagem "User defined signal 1"
+}
+
+void encerrar_todos_os_clientes() {
+    for (int i = 0; i < num_clientes; i++) {
+        int sockfd;
+        struct sockaddr_in addr;
+
+        if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+            perror("socket para fechar cliente");
+            continue;
+        }
+
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(SERVER_PORT);  // Porta do cliente, se for a mesma
+        addr.sin_addr = clientes[i].ip;
+
+        if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            perror("connect para fechar cliente");
+            close(sockfd);
+            continue;
+        }
+
+        close(sockfd);
+    }
+}
+
+void erro(char *msg)
+{
+    perror(msg);
+    exit(1);
+}
+
+void sigusr1_handler(int sig) {
+    close(client_fd_global);
+    exit(0);
 }

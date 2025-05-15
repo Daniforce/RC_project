@@ -4,9 +4,10 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include "POWERUDP_H.h"
 
-#define PORT 9877
+#define PORT 1048
 #define BUFLEN 512
 #define MAX_RETRIES 5
 #define TMIN 500
@@ -178,67 +179,98 @@ void erro(char *s) {
 }
 
 int main() {
-    int sockfd;
-    struct sockaddr_in addr, dest;
-    
+    int tcp_sockfd, udp_sockfd;
+    struct sockaddr_in server_addr, udp_dest;
+    char buffer[BUFLEN];
     uint32_t seq_num = 0;
 
-    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        perror("socket");
+    if ((tcp_sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        perror("socket TCP");
         exit(1);
     }
 
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(PORT);
-    dest.sin_addr.s_addr = htonl(INADDR_ANY);
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);                                    //PORTA
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");                  //IP
 
-    if (connect(sockfd, (struct sockaddr *)&dest, sizeof(dest)) < 0) {
-        perror("bind");
-        close(sockfd);
+    if (connect(tcp_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("connect TCP");
+        close(tcp_sockfd);
         exit(1);
     }
 
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(PORT);
-    dest.sin_addr.s_addr = inet_addr("127.0.0.1");
+    write(tcp_sockfd, POWERUDP_PSK, strlen(POWERUDP_PSK));
 
-    write(sockfd, POWERUDP_PSK, strlen(POWERUDP_PSK));
-
-          char resposta[4];
-    read(sockfd, resposta, sizeof(resposta));
+    char resposta[4];
+    read(tcp_sockfd, resposta, sizeof(resposta));
     resposta[3] = '\0';
 
     if (strcmp(resposta, "ACK") == 0) {
         printf("Autenticado! Iniciando comunicação...\n");
-        fd_set readfds;
-        int maxfd = (sockfd > multicast_sock ? sockfd : multicast_sock);
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_flags = 0;
+
+        if (sigaction(SIGINT, &sa, NULL) == -1) {
+            perror("sigaction");
+            exit(1);
+        }
+
+        // === Socket UDP para comunicação com outros clientes ===
+        if ((udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+            perror("socket UDP");
+            exit(1);
+        }
+
+        memset(&udp_dest, 0, sizeof(udp_dest));
+        udp_dest.sin_family = AF_INET;
+        udp_dest.sin_port = htons(PORT);
+        udp_dest.sin_addr.s_addr = inet_addr("127.0.0.1"); // Pode ser modificado para endereço real do peer
+
         configurar_socket_multicast();
 
-        while (1) {
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(sockfd, &readfds);          
-            FD_SET(multicast_sock, &readfds);
+        fd_set readfds;
+        int maxfd = udp_sockfd > multicast_sock ? udp_sockfd : multicast_sock;
+        if (tcp_sockfd > maxfd) maxfd = tcp_sockfd;
 
-            int maxfd = sockfd;
-            if (multicast_sock > maxfd) maxfd = multicast_sock;
+        while (1) 
+        {
+            FD_ZERO(&readfds);
+            FD_SET(0, &readfds); // stdin
+            FD_SET(udp_sockfd, &readfds); // UDP
+            FD_SET(multicast_sock, &readfds); // multicast
+            FD_SET(tcp_sockfd, &readfds);
 
             if (select(maxfd + 1, &readfds, NULL, NULL, NULL) < 0) {
                 perror("select");
                 continue;
             }
 
+            if (FD_ISSET(tcp_sockfd, &readfds)) 
+            {
+                    char buffer[64];
+                    ssize_t len = read(tcp_sockfd, buffer, sizeof(buffer) - 1);
+                    if (len == 0) {
+                        printf("[CLIENTE] Conexão TCP encerrada pelo servidor.\n");
+                        close(tcp_sockfd);
+                        close(udp_sockfd);
+                        close(multicast_sock);
+                        exit(0);
+                    }
+            }
+
+            // Envio de mensagens PowerUDP (entrada do utilizador)
             if (FD_ISSET(0, &readfds)) {
                 char buf[BUFLEN];
                 fgets(buf, BUFLEN, stdin);
                 buf[strcspn(buf, "\n")] = 0;
-
-                envia_powerudp_confiavel(sockfd, &dest, buf, seq_num++);
+                envia_powerudp_confiavel(udp_sockfd, &udp_dest, buf, seq_num++);
             }
 
-            if (FD_ISSET(sockfd, &readfds)) {
-                recebe_powerudp_com_ack(sockfd);
+            if (FD_ISSET(udp_sockfd, &readfds)) {
+                recebe_powerudp_com_ack(udp_sockfd);
             }
 
             if (FD_ISSET(multicast_sock, &readfds)) {
@@ -256,11 +288,12 @@ int main() {
             }
         }
         close(multicast_sock);
-        close(sockfd);
+        close(tcp_sockfd);
+    
         return 0;
     } else {
         printf("Falha na autenticação.\n");
-        close(sockfd);
+        close(tcp_sockfd);
         return 1;
     }
 }
