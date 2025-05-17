@@ -8,9 +8,13 @@
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <pthread.h>
+
 
 #define SERVER_PORT     1048
 #define BUF_SIZE        1024
+
+pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct ConfigMessage {
     uint8_t enable_retransmission;
@@ -32,10 +36,16 @@ struct ClienteInfo {
     struct in_addr ip;
 };
 
+
 struct ClienteInfo clientes[3];
 pid_t pids[3];
 int num_clientes = 0;
 int client_fd_global;
+
+struct ThreadArgs {
+    int client_fd;
+    struct sockaddr_in client_addr;
+};
 
 void process_client(int client_fd, struct sockaddr_in *client_addr);
 void enviar_config_multicast();
@@ -45,6 +55,10 @@ void encerrar_todos_os_clientes();
 void erro(char *msg);
 void sigusr1_handler(int sig);
 void dummy_sigusr1_handler(int sig);
+void *thread_process_client(void* arg);
+
+
+
 
 int main() 
 {
@@ -72,26 +86,24 @@ int main()
 
     while (1)
     {
-        while (waitpid(-1, NULL, WNOHANG) > 0);
-
         if((client = accept(fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_size)) == -1)
-          erro("na função accept");
+            erro("na função accept");
 
-        pid_t pid = fork();
+        struct ThreadArgs* targs = malloc(sizeof(struct ThreadArgs));
+        targs->client_fd = client;
+        targs->client_addr = client_addr;
 
-        if (client > 0) {
-            if (pid == 0) {
-                signal(SIGINT, SIG_DFL);
-                close(fd);
-                process_client(client, &client_addr);
-                exit(0);
-            }else 
-            {
-                pids[num_clientes] = pid; // array global com os pids dos filhos
-                adicionar_cliente(client_addr.sin_addr);
-                close(client);
-            }
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, thread_process_client, targs) != 0) {
+            perror("pthread_create");
+            close(client);
+            free(targs);
+            continue;
         }
+        pthread_detach(tid); // Libera recursos da thread automaticamente ao terminar
+
+        adicionar_cliente(client_addr.sin_addr);
+    
     }
     return 0;
 }
@@ -138,20 +150,36 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
             continue;
         } else {
             printf("Nova configuração recebida de %s\n", inet_ntoa(client_addr->sin_addr));
+            pthread_mutex_lock(&config_mutex);
             configuracao_ativa.enable_retransmission = req.enable_retransmission;
             configuracao_ativa.enable_backoff = req.enable_backoff;
             configuracao_ativa.enable_sequence = req.enable_sequence;
             configuracao_ativa.base_timeout = req.base_timeout;
             configuracao_ativa.max_retries = req.max_retries;
+            pthread_mutex_unlock(&config_mutex);
             enviar_config_multicast();
         }
     }
     close(client_fd);
 }
 
+void* thread_process_client(void* arg) {
+    struct ThreadArgs* targs = (struct ThreadArgs*)arg;
+    process_client(targs->client_fd, &targs->client_addr);
+    close(targs->client_fd);
+    free(targs);
+    return NULL;
+}
+
 void enviar_config_multicast() {
     int sockfd;
     struct sockaddr_in dest;
+    struct ConfigMessage copia_config;
+
+    pthread_mutex_lock(&config_mutex);
+    memcpy(&copia_config, &configuracao_ativa, sizeof(copia_config));
+    pthread_mutex_unlock(&config_mutex);
+
 
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket multicast");
