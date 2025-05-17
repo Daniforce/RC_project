@@ -128,26 +128,24 @@ void process_client(int client_fd, struct sockaddr_in *client_addr)
     {
         ssize_t r = read(client_fd, &req, sizeof(req));
         if (r == 0) {
-            printf("Cliente fechou a ligação\n");
-            break;
+            printf("[INFO] Cliente %s fechou a ligação.\n", inet_ntoa(client_addr->sin_addr));
+            break;  // Cliente fechou a ligação, sair do loop
+        } else if (r < 0) {
+            perror("[ERRO] Erro ao ler configuração");
+            break; 
         } else if (r != sizeof(req)) {
-            fprintf(stderr, "Erro ou mensagem malformada recebida\n");
-            break;
-        }
-
-        configuracao_ativa.enable_retransmission = req.enable_retransmission;
-        configuracao_ativa.enable_backoff = req.enable_backoff;
-        configuracao_ativa.enable_sequence = req.enable_sequence;
-        configuracao_ativa.base_timeout = req.base_timeout;
-        configuracao_ativa.max_retries = req.max_retries;
-
-        if(n) {
-            fprintf(stderr, "[ERRO] Erro ao ler configuração\n");
+            fprintf(stderr, "[ERRO] Tamanho inesperado da configuração: %ld bytes\n", r);
+            continue;
+        } else {
             printf("Nova configuração recebida de %s\n", inet_ntoa(client_addr->sin_addr));
+            configuracao_ativa.enable_retransmission = req.enable_retransmission;
+            configuracao_ativa.enable_backoff = req.enable_backoff;
+            configuracao_ativa.enable_sequence = req.enable_sequence;
+            configuracao_ativa.base_timeout = req.base_timeout;
+            configuracao_ativa.max_retries = req.max_retries;
             enviar_config_multicast();
         }
     }
-
     close(client_fd);
 }
 

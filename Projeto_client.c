@@ -9,7 +9,6 @@
 
 #define PORT 1048
 #define BUFLEN 512
-#define MAX_RETRIES 5
 #define TMIN 500
 
 #define MULTICAST_GROUP "239.0.0.1"
@@ -97,10 +96,11 @@ void envia_powerudp_confiavel(int sockfd, struct sockaddr_in *dest, const char *
     int tentativas = 0;
     int ack_recebido = 0;
     socklen_t addrlen = sizeof(*dest);
+    ConfigMessage config;
 
     struct timeval timeout;
 
-    while (tentativas < MAX_RETRIES && !ack_recebido) {
+    while (tentativas < config.max_retries && !ack_recebido) {
         envia_powerudp(sockfd, dest, dados, seq_num);
 
         timeout.tv_sec = 0;
@@ -128,9 +128,10 @@ void envia_powerudp_confiavel(int sockfd, struct sockaddr_in *dest, const char *
     }
 
     if (!ack_recebido) {
-        printf("Erro: não foi possível confirmar entrega após %d tentativas\n", MAX_RETRIES);
+        printf("Erro: não foi possível confirmar entrega após %d tentativas\n", config.max_retries);
     }
 }
+
 
 void envia_acknak(int sockfd, struct sockaddr_in *dest, uint32_t seq_num, uint8_t tipo);
 
@@ -173,9 +174,71 @@ void envia_acknak(int sockfd, struct sockaddr_in *dest, uint32_t seq_num, uint8_
     sendto(sockfd, &header, sizeof(header), 0, (struct sockaddr *)dest, sizeof(*dest));
 }
 
+void envia_powerudp_confiavel_binario(int sockfd, struct sockaddr_in *dest, const void *dados, size_t dados_len, uint32_t seq_num) {
+    int tentativas = 0;
+    int ack_recebido = 0;
+    socklen_t addrlen = sizeof(*dest);
+    ConfigMessage config;
+
+    struct timeval timeout;
+
+    while (tentativas < config.max_retries && !ack_recebido) {
+        PowerUDPHeader header;
+        header.seq_num = htonl(seq_num);
+        header.ack = 0;
+        header.flags = 0;
+        header.length = htons(dados_len);
+
+        char buffer[BUFLEN];
+        memcpy(buffer, &header, sizeof(header));
+        memcpy(buffer + sizeof(header), dados, dados_len);
+
+        ssize_t enviados = sendto(sockfd, buffer, sizeof(header) + dados_len, 0, (struct sockaddr *)dest, addrlen);
+        if (enviados != (ssize_t)(sizeof(header) + dados_len)) {
+            perror("Erro ao enviar configuração");
+        } else {
+            printf("[CLIENTE] Novas configurações enviadas ao servidor.\n");
+        }
+        
+        timeout.tv_sec = 0;
+        timeout.tv_usec = TMIN * 1000 * (1 << tentativas);
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        char recv_buffer[1024];
+        struct sockaddr_in src;
+        PowerUDPHeader recv_header;
+
+        ssize_t len = ler_header(sockfd, recv_buffer, &src, &addrlen, &recv_header);
+
+        if (len > 0) {
+            if (recv_header.ack == 1 && recv_header.seq_num == seq_num) {
+                printf("ACK recebido para seq=%u\n", seq_num);
+                ack_recebido = 1;
+            } else if (recv_header.ack == 2) {
+                printf("NAK recebido! Reenviando...\n");
+            }
+        } else {
+            printf("Timeout: tentativa %d\n", tentativas + 1);
+        }
+
+        tentativas++;
+    }
+
+    if (!ack_recebido) {
+        printf("Erro: não foi possível confirmar entrega após %d tentativas\n", config.max_retries);
+    }
+}
+
 void erro(char *s) {
     perror(s);
     exit(1);
+}
+
+void show_menu() {
+    printf("\nMENU:\n");
+    printf("1. Enviar novas configurações ao servidor\n");
+    printf("2. Mensagem a algum cliente\n");
+    printf("Escolha uma opção: ");
 }
 
 int main() {
@@ -235,6 +298,8 @@ int main() {
         int maxfd = udp_sockfd > multicast_sock ? udp_sockfd : multicast_sock;
         if (tcp_sockfd > maxfd) maxfd = tcp_sockfd;
 
+        show_menu();
+
         while (1) 
         {
             FD_ZERO(&readfds);
@@ -263,10 +328,39 @@ int main() {
 
             // Envio de mensagens PowerUDP (entrada do utilizador)
             if (FD_ISSET(0, &readfds)) {
-                char buf[BUFLEN];
-                fgets(buf, BUFLEN, stdin);
-                buf[strcspn(buf, "\n")] = 0;
-                envia_powerudp_confiavel(udp_sockfd, &udp_dest, buf, seq_num++);
+                char opcao;
+                scanf(" %c", &opcao);
+
+                if (opcao == '1') 
+                {
+                    ConfigMessage config;
+                    printf("Deseja ativar retransmissão (0 ou 1): ");
+                    scanf("%hhu", &config.enable_retransmission);
+
+                    printf("Deseja ativar backoff (0 ou 1): ");
+                    scanf("%hhu", &config.enable_backoff);
+
+                    printf("Deseja ativar sequência (0 ou 1): ");
+                    scanf("%hhu", &config.enable_sequence);
+
+                    printf("Base timeout (ms): ");
+                    scanf("%hu", &config.base_timeout);
+
+                    printf("Máximo de tentativas: ");
+                    scanf("%hhu", &config.max_retries);
+
+                    printf("[CLIENTE] A enviar as novas configurações ao servidor...\n");
+
+                    envia_powerudp_confiavel_binario(tcp_sockfd, &server_addr, &config, sizeof(config), seq_num++);
+
+                    show_menu();
+                } else if (opcao == '2') {
+                    printf("[CLIENTE] Diga o cliente:\n");
+                    //printf("Mensagem atual: %s\n", mensagem);
+                    show_menu();
+                } else {
+                    printf("[CLIENTE] Opção inválida!\n");
+                }
             }
 
             if (FD_ISSET(udp_sockfd, &readfds)) {
@@ -288,6 +382,7 @@ int main() {
             }
         }
         close(multicast_sock);
+        close(udp_sockfd);
         close(tcp_sockfd);
     
         return 0;
