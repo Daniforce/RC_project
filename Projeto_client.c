@@ -229,6 +229,15 @@ void envia_powerudp_confiavel_binario(int sockfd, struct sockaddr_in *dest, cons
     }
 }
 
+void envia_configuracao_tcp(int sockfd, ConfigMessage *config) {
+    ssize_t enviados = write(sockfd, config, sizeof(*config));
+    if (enviados != sizeof(*config)) {
+        perror("Erro ao enviar configuração");
+    } else {
+        printf("[CLIENTE] Novas configurações enviadas ao servidor.\n");
+    }
+}
+
 void erro(char *s) {
     perror(s);
     exit(1);
@@ -351,7 +360,8 @@ int main() {
 
                     printf("[CLIENTE] A enviar as novas configurações ao servidor...\n");
 
-                    envia_powerudp_confiavel_binario(tcp_sockfd, &server_addr, &config, sizeof(config), seq_num++);
+                    config.base_timeout = htons(config.base_timeout);
+                    envia_configuracao_tcp(tcp_sockfd, &config);
 
                     show_menu();
                 } else if (opcao == '2') {
