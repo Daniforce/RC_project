@@ -32,6 +32,10 @@ typedef struct
     uint8_t max_retries;      
 } ConfigMessage;
 
+struct RegisterMessage {
+    char psk[64]; // Chave pré-definida para autenticação
+};
+
 void configurar_socket_multicast() {
     struct sockaddr_in addr;
     struct ip_mreq mreq;
@@ -253,6 +257,7 @@ void show_menu() {
 int main() {
     int tcp_sockfd, udp_sockfd;
     struct sockaddr_in server_addr, udp_dest;
+    struct RegisterMessage msg;
     char buffer[BUFLEN];
     uint32_t seq_num = 0;
 
@@ -272,7 +277,9 @@ int main() {
         exit(1);
     }
 
-    write(tcp_sockfd, POWERUDP_PSK, strlen(POWERUDP_PSK));
+    strncpy(msg.psk, POWERUDP_PSK, sizeof(msg.psk) - 1);
+    msg.psk[sizeof(msg.psk) - 1] = '\0';
+    write(tcp_sockfd, msg.psk, strlen(msg.psk));
 
     char resposta[4];
     read(tcp_sockfd, resposta, sizeof(resposta));
